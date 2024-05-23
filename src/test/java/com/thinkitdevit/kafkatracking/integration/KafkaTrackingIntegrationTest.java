@@ -1,10 +1,12 @@
 package com.thinkitdevit.kafkatracking.integration;
 
 
+import com.thinkitdevit.dispatch.message.DispatchCompleted;
 import com.thinkitdevit.dispatch.message.DispatchPreparing;
 import com.thinkitdevit.dispatch.message.TrackingStatusUpdated;
 import com.thinkitdevit.kafkatracking.config.KafkaTrackingConfiguration;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,10 +20,12 @@ import org.springframework.kafka.support.KafkaHeaders;
 import org.springframework.kafka.test.EmbeddedKafkaBroker;
 import org.springframework.kafka.test.context.EmbeddedKafka;
 import org.springframework.kafka.test.utils.ContainerTestUtils;
+import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.ActiveProfiles;
 
+import java.time.LocalDate;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -32,7 +36,7 @@ import static org.hamcrest.Matchers.equalTo;
 
 @Slf4j
 @SpringBootTest(classes = {KafkaTrackingConfiguration.class})
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+@DirtiesContext(classMode = DirtiesContext.ClassMode.BEFORE_EACH_TEST_METHOD)
 @ActiveProfiles("test")
 @EmbeddedKafka(controlledShutdown = true)
 public class KafkaTrackingIntegrationTest {
@@ -63,34 +67,48 @@ public class KafkaTrackingIntegrationTest {
 
     public static class KafkaTestListener{
         AtomicInteger trackingStatusCount = new AtomicInteger(0);
-        AtomicInteger dispatchTrackingCount = new AtomicInteger(0);
+        AtomicInteger dispatchTrackingPreparingCount = new AtomicInteger(0);
+        AtomicInteger dispatchTrackingCompletedCount = new AtomicInteger(0);
 
         @KafkaListener(topics = TRACKING_STATUS_TOPIC, groupId = "kafkaTest")
-        public void listenTrackingStatus(TrackingStatusUpdated payload){
+        public void listenTrackingStatus(@Payload TrackingStatusUpdated payload){
             log.info("Received message: {}", payload);
             trackingStatusCount.incrementAndGet();
         }
 
         @KafkaListener(topics = DISPATCH_TRACKING_TOPIC, groupId = "kafkaTest")
-        public void listenDispatchTracking(DispatchPreparing payload){
-            log.info("Received message: {}", payload);
-            dispatchTrackingCount.incrementAndGet();
+        public void listenDispatchTracking( ConsumerRecord consumerRecord){
+            log.info("Received message: {}", consumerRecord);
+
+            Object payload = consumerRecord.value();
+            
+            if(payload instanceof DispatchPreparing){
+                dispatchTrackingPreparingCount.incrementAndGet();
+            }else if (payload instanceof DispatchCompleted) {
+                dispatchTrackingCompletedCount.incrementAndGet();
+            }else{
+                log.warn("Unknown message type: {}", payload);
+                throw new IllegalArgumentException("Unknown message type");
+            }
+
         }
 
     }
 
     @BeforeEach
     public void setUp(){
-        kafkaListener.dispatchTrackingCount.set(0);
+        kafkaListener.dispatchTrackingPreparingCount.set(0);
+        kafkaListener.dispatchTrackingCompletedCount.set(0);
         kafkaListener.trackingStatusCount.set(0);
 
         registry.getListenerContainers()
-                .forEach(container -> ContainerTestUtils.waitForAssignment(container, embeddedKafkaBroker.getPartitionsPerTopic()));
+                .forEach(container -> ContainerTestUtils.waitForAssignment(container,
+                        container.getContainerProperties().getTopics().length * embeddedKafkaBroker.getPartitionsPerTopic()));
     }
 
 
     @Test
-    public void testTrackingStatusFlow() throws ExecutionException, InterruptedException {
+    public void testDispatchPreparingTrackingStatusFlow() throws ExecutionException, InterruptedException {
 
         UUID orderId = UUID.randomUUID();
         DispatchPreparing dispatchPreparing = DispatchPreparing.builder()
@@ -100,7 +118,29 @@ public class KafkaTrackingIntegrationTest {
         sendMessage(DISPATCH_TRACKING_TOPIC, dispatchPreparing);
 
         await().atMost(3, TimeUnit.SECONDS).pollDelay(100, TimeUnit.MILLISECONDS)
-                .until(kafkaListener.dispatchTrackingCount::get, equalTo(1));
+                .until(kafkaListener.dispatchTrackingPreparingCount::get, equalTo(1));
+        await().atMost(1, TimeUnit.SECONDS).pollDelay(100, TimeUnit.MILLISECONDS)
+                .until(kafkaListener.dispatchTrackingCompletedCount::get, equalTo(0));
+        await().atMost(1, TimeUnit.SECONDS).pollDelay(100, TimeUnit.MILLISECONDS)
+                .until(kafkaListener.trackingStatusCount::get, equalTo(1));
+
+    }
+
+    @Test
+    public void testDispatchCompletedTrackingStatusFlow() throws ExecutionException, InterruptedException {
+
+        UUID orderId = UUID.randomUUID();
+        DispatchCompleted dispatchCompleted = DispatchCompleted.builder()
+                .orderId(orderId)
+                .distpatchedDate(LocalDate.now().toString())
+                .build();
+
+        sendMessage(DISPATCH_TRACKING_TOPIC, dispatchCompleted);
+
+        await().atMost(3, TimeUnit.SECONDS).pollDelay(100, TimeUnit.MILLISECONDS)
+                .until(kafkaListener.dispatchTrackingPreparingCount::get, equalTo(0));
+        await().atMost(1, TimeUnit.SECONDS).pollDelay(100, TimeUnit.MILLISECONDS)
+                .until(kafkaListener.dispatchTrackingCompletedCount::get, equalTo(1));
         await().atMost(1, TimeUnit.SECONDS).pollDelay(100, TimeUnit.MILLISECONDS)
                 .until(kafkaListener.trackingStatusCount::get, equalTo(1));
 

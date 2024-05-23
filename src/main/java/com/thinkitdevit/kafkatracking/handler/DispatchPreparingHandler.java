@@ -1,31 +1,46 @@
 package com.thinkitdevit.kafkatracking.handler;
 
+import com.thinkitdevit.dispatch.message.DispatchCompleted;
 import com.thinkitdevit.dispatch.message.DispatchPreparing;
 import com.thinkitdevit.kafkatracking.service.TrackingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.kafka.annotation.KafkaHandler;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.stereotype.Component;
-
-import java.util.concurrent.ExecutionException;
 
 @Slf4j
 @RequiredArgsConstructor
 @Component
+@KafkaListener(id="dispatchPreparingConsumerClient",
+        topics = "dispatch.tracking",
+        groupId = "tracking.dispatch.tracking",
+        containerFactory = "kafkaListenerContainerFactory" )
 public class DispatchPreparingHandler {
 
     private final TrackingService trackingService;
 
-    @KafkaListener(id="dispatchPreparingConsumerClient",
-            topics = "dispatch.tracking",
-            groupId = "tracking.dispatch.tracking",
-            containerFactory = "kafkaListenerContainerFactory" )
+    @KafkaHandler
     public void listen(DispatchPreparing payload){
         try {
-            trackingService.process(payload);
+            trackingService.processPreparing(payload);
         } catch (Exception e) {
             log.error("Error processing message", e);
         }
+    }
+
+    @KafkaHandler
+    public void listen(DispatchCompleted payload){
+        try {
+            trackingService.processDispatchCompleted(payload);
+        } catch (Exception e) {
+            log.error("Error processing message", e);
+        }
+    }
+
+    @KafkaHandler(isDefault = true)
+    public void listen(Object payload){
+        log.warn("Unknown message type: {}", payload);
     }
 
 }

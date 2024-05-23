@@ -21,6 +21,8 @@ import java.util.Map;
 @Configuration
 public class KafkaTrackingConfiguration {
 
+    public static final String TRUSTED_PACKAGES = "com.thinkitdevit.dispatch.message";
+
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, Object> kafkaListenerContainerFactory(ConsumerFactory<String, Object> consumerFactory){
         ConcurrentKafkaListenerContainerFactory<String, Object> factory = new ConcurrentKafkaListenerContainerFactory<>();
@@ -36,7 +38,7 @@ public class KafkaTrackingConfiguration {
                 ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
                 ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class,
                 ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class,
-                JsonDeserializer.VALUE_DEFAULT_TYPE, DispatchPreparing.class
+                JsonDeserializer.TRUSTED_PACKAGES, TRUSTED_PACKAGES
         );
 
         return new DefaultKafkaConsumerFactory<>(config);
